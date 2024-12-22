@@ -4,6 +4,7 @@ import threading
 import os
 import signal
 import psutil
+from database.operations import get_current_inventory
 
 app = Flask(__name__)
 
@@ -118,6 +119,57 @@ HTML_TEMPLATE = """
         <button class="button stop" onclick="controlService('live_feed', 'stop')">Stop</button>
         
         <img id="live-feed" src="http://localhost:5000/video_feed" style="display: none;">
+        
+        <h2>Current Inventory</h2>
+        <div id="inventory-container" class="status">Loading...</div>
+        <button class="button" onclick="refreshInventory()">Refresh Inventory</button>
+        
+        <script>
+            function refreshInventory() {
+                fetch('/inventory')
+                    .then(response => response.json())
+                    .then(data => {
+                        const container = document.getElementById('inventory-container');
+                        if (data.length === 0) {
+                            container.innerHTML = '<p>No items in inventory</p>';
+                            return;
+                        }
+                        
+                        const table = `
+                            <table style="width:100%; border-collapse: collapse; margin-top: 10px;">
+                                <thead>
+                                    <tr style="background-color: #f5f5f5;">
+                                        <th style="padding: 8px; border: 1px solid #ddd;">Item</th>
+                                        <th style="padding: 8px; border: 1px solid #ddd;">Quantity</th>
+                                        <th style="padding: 8px; border: 1px solid #ddd;">Last Seen</th>
+                                        <th style="padding: 8px; border: 1px solid #ddd;">Confidence</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${data.map(item => `
+                                        <tr>
+                                            <td style="padding: 8px; border: 1px solid #ddd;">${item.name}</td>
+                                            <td style="padding: 8px; border: 1px solid #ddd;">${item.quantity}</td>
+                                            <td style="padding: 8px; border: 1px solid #ddd;">${new Date(item.last_seen).toLocaleString()}</td>
+                                            <td style="padding: 8px; border: 1px solid #ddd;">${(item.confidence * 100).toFixed(1)}%</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>`;
+                        container.innerHTML = table;
+                    })
+                    .catch(error => {
+                        console.error('Error fetching inventory:', error);
+                        document.getElementById('inventory-container').innerHTML = 
+                            '<p style="color: red;">Error loading inventory</p>';
+                    });
+            }
+            
+            // Initial inventory load
+            document.addEventListener('DOMContentLoaded', refreshInventory);
+            // Refresh inventory every 30 seconds
+            setInterval(refreshInventory, 30000);
+        </script>
     </div>
 </body>
 </html>
@@ -158,6 +210,14 @@ def control(service, action):
             processes[service] = None
     
     return jsonify({'status': 'success'})
+
+@app.route('/inventory')
+def inventory():
+    try:
+        items = get_current_inventory()
+        return jsonify(items)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 def cleanup():
     for process in processes.values():
