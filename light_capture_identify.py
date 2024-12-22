@@ -6,6 +6,7 @@ import os
 import logging
 from capture_identify import encode_image, ask_openai_for_objects, parse_response_to_json, update_json_file
 from openai import OpenAI
+from database.operations import record_fridge_event, update_items
 
 # Configuration
 CAMERA_INDEX = 0
@@ -62,15 +63,25 @@ def capture_and_process(cap, client):
         logger.error("Frame capture failed")
         raise RuntimeError("Failed to capture frame")
     
+    # Get light level
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    light_level = np.mean(gray)
+    
     cv2.imwrite(output_path, frame)
     logger.info("Image saved successfully")
     
     try:
+        # Record the event first
+        event_id = record_fridge_event('item_detected', output_path, light_level)
+        
         logger.info("Starting OpenAI processing")
         base64_image = encode_image(output_path)
-        # Pass client to ask_openai_for_objects
         response_str = ask_openai_for_objects(base64_image, client=client)
         parsed_data = parse_response_to_json(response_str)
+        
+        # Update database with detected items
+        update_items(parsed_data.get('items', []), event_id)
+        
         parsed_data['image_path'] = output_path
         update_json_file(parsed_data)
         logger.info("OpenAI processing completed successfully")
