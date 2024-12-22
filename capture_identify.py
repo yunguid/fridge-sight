@@ -73,31 +73,22 @@ def encode_image(image_path):
         raise RuntimeError(f"Image encoding failed: {str(e)}")
 
 def ask_openai_for_objects(base64_image, client=None, max_retries=MAX_RETRIES):
-    """
-    Ask OpenAI to identify objects in the image.
-    Args:
-        base64_image: Base64 encoded image
-        client: OpenAI client instance
-        max_retries: Maximum number of retry attempts
-    """
+    """Ask OpenAI to identify objects in the image."""
     if client is None:
         raise ValueError("OpenAI client must be provided")
         
     prompt_text = """Analyze this fridge image and identify visible items.
-    Respond ONLY with valid JSON in this exact format:
+    Return ONLY a JSON object with this exact format:
     {
       "items": [
         {
-          "type": "string",      // Basic category (e.g., "Milk", "Juice", "Yogurt", "Leftovers")
-          "brand": "string",     // Brand if clearly visible, "Unknown" if not
-          "quantity": {
-            "count": number,     // Number of containers
-            "size": "string"     // Container size if visible (e.g., "1 gallon", "32 oz", "Unknown")
-          },
-          "confidence": "string" // "High", "Medium", or "Low" based on visibility/clarity
+          "name": "string",       // Item name (e.g., "Milk", "Juice")
+          "quantity": number,     // Number of items
+          "confidence": number    // Confidence score between 0-1
         }
       ]
     }"""
+
     messages = [
         {
             "role": "user",
@@ -110,42 +101,31 @@ def ask_openai_for_objects(base64_image, client=None, max_retries=MAX_RETRIES):
             ]
         }
     ]
-    
+
     for attempt in range(max_retries):
         try:
             response = client.chat.completions.create(
-                model="gpt-4o",  # Keeping the model as gpt-4o as requested
+                model="gpt-4o",
                 messages=messages,
                 max_tokens=300,
                 temperature=0.3
             )
             
-            # Debug print
-            print(f"Raw API response: {response.choices[0].message.content}")
-            
             response_text = response.choices[0].message.content.strip()
             
-            # Try to extract JSON if it's embedded in the response
+            # Clean up response
             if '```json' in response_text:
                 response_text = response_text.split('```json')[1].split('```')[0].strip()
             elif '```' in response_text:
                 response_text = response_text.split('```')[1].split('```')[0].strip()
-                
-            # Clean any potential markdown or extra text
+            
             if '{' in response_text:
                 response_text = response_text[response_text.find('{'):response_text.rfind('}')+1]
             
-            # Validate JSON
-            try:
-                json.loads(response_text)
-                return response_text
-            except json.JSONDecodeError as je:
-                print(f"JSON validation failed: {je}")
-                raise
-            
+            return response_text
+
         except Exception as e:
             print(f"Attempt {attempt + 1} failed: {str(e)}")
-            print(f"Response text: {response_text if 'response_text' in locals() else 'No response'}")
             if attempt == max_retries - 1:
                 raise RuntimeError(f"Failed after {max_retries} attempts: {str(e)}")
             time.sleep(RETRY_DELAY)
@@ -167,19 +147,23 @@ def parse_response_to_json(response_str):
         
         data = json.loads(cleaned_response)
         
-        # Validate expected structure - changed from "objects" to "items"
+        # Validate expected structure
         if not isinstance(data, dict) or "items" not in data:
             raise ValueError("Invalid response structure - missing 'items' key")
             
         # Validate items structure
         for item in data["items"]:
-            required_keys = {"type", "brand", "quantity", "confidence"}
+            required_keys = {"name", "quantity", "confidence"}
             if not all(key in item for key in required_keys):
                 raise ValueError(f"Invalid item structure - missing required keys: {required_keys}")
             
-            if not isinstance(item["quantity"], dict) or \
-               not all(key in item["quantity"] for key in ["count", "size"]):
-                raise ValueError("Invalid quantity structure")
+            # Validate quantity is a number
+            if not isinstance(item["quantity"], (int, float)):
+                raise ValueError("Invalid quantity structure - must be a number")
+            
+            # Validate confidence is a number between 0-1
+            if not isinstance(item["confidence"], (int, float)) or not 0 <= item["confidence"] <= 1:
+                raise ValueError("Invalid confidence value - must be a number between 0 and 1")
         
         return data
         
@@ -271,3 +255,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
