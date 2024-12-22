@@ -1,4 +1,3 @@
-
 logs/
 # Virtual environment
 /env/
@@ -21,4 +20,6 @@ __pycache__/
 *.png
 detected_objects.json
 .env
-
++ # Database
++ fridge_state.db
++ *.db
